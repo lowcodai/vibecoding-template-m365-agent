@@ -1,0 +1,20 @@
+name: 🏛️ ADR Request
+description: Request the creation of an Architecture Decision Record
+labels: ["type: adr"]
+body:
+  - type: input
+    id: title
+    attributes:
+      label: Decision title
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Context and problem
+    validations:
+      required: true
+  - type: textarea
+    id: options
+    attributes:
+      label: Options to consider

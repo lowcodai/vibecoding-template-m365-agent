@@ -1,0 +1,11 @@
+.DS_Store
+*.swp
+.env
+.env.local
+__pycache__/
+*.pyc
+node_modules/
+.venv/
+venv/
+.terraform/
+*.tfstate

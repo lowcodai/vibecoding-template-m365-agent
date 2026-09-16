@@ -1,0 +1,25 @@
+name: M365 Agent Manifest Check
+on:
+  pull_request:
+    paths: ["appPackage/**"]
+jobs:
+  manifest-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate manifest JSON files are well-formed
+        run: |
+          shopt -s globstar nullglob
+          found=0
+          for f in appPackage/**/*.json; do
+            found=1
+            echo "Checking $f"
+            python3 -m json.tool "$f" > /dev/null
+          done
+          if [[ "$found" -eq 0 ]]; then
+            echo "No manifest JSON files found yet under appPackage/ — nothing to validate."
+          fi
+      - name: Reminder
+        run: |
+          echo "This is a syntax check only. Validate against the current Microsoft 365 Agents"
+          echo "Toolkit schema (https://github.com/microsoft/m365-agent-templates) before publishing."
