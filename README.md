@@ -42,6 +42,23 @@ integration, Entra App Registration, security/threat-model review) — see
 `.github/awesome-copilot-manifest.md` in an instantiated project for the full list, and
 `vibecoding-bootstrap/scripts/install-awesome-copilot.sh`'s `m365` case for the source of truth.
 
+## Publishing to a tenant
+
+Two ready-to-copy Runbook templates cover the full path from a finished manifest to a live agent
+in Microsoft 365 Copilot — see `docs/runbooks/README.md` for the details:
+
+1. `templates/RUNBOOK-m365-oauth-packaging-sideload-template.md` — OAuth registration, packaging,
+   and personal sideload, scripted end-to-end via the `atk` CLI (`@microsoft/m365agentstoolkit-cli`)
+   instead of the manual VS Code Agents Toolkit wizard.
+2. `templates/RUNBOOK-m365-tenant-publish-template.md` — tenant-wide catalog publish, once the
+   sideload is validated.
+
+Both assume **a Claude Code CLI session runs them, not a Hermes-orchestrated agent** — the M365
+sign-in and the tenant-catalog publish are Microsoft APIs that only accept a delegated,
+interactively-authenticated session (no service-principal/certificate app-only token works for
+them), so whichever agent executes these Runbooks needs to be one a human can complete that one
+login through.
+
 ## Reference implementation
 
 [lowcodai/copilot-github-manager](https://github.com/lowcodai/copilot-github-manager) is a real
