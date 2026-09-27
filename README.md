@@ -3,6 +3,7 @@
 > Template for Microsoft 365 Copilot declarative agents backed by an MCP server.
 
 [![Governance](https://img.shields.io/badge/governance-lowcodai-blue)](https://github.com/lowcodai/vibecoding-copilot-governance)
+[![Release](https://img.shields.io/github/v/release/lowcodai/vibecoding-template-m365-agent)](https://github.com/lowcodai/vibecoding-template-m365-agent/releases/tag/v0.0.1)
 
 ## Description
 
