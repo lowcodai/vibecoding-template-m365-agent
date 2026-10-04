@@ -19,6 +19,16 @@ GitHub-MCP-backed agent) to any future MCP-backed M365 Copilot project. Includes
   agent is still an AI agent for governance purposes)
 - A manifest-JSON-validity CI check (`m365-agent-manifest-check.yml`)
 
+## Agent rulebook
+
+[`AGENTS.md`](AGENTS.md) is the first file every agent (Hermes, Claude Code, Copilot) and every
+contributor reads: commands, repository map, the DEV → REVIEW → TEST workflow (ADR-0005),
+boundaries and definition of done. Fill in its `TODO` markers when you create a project from
+this template. It is rendered by `vibecoding-bootstrap/scripts/apply-template.sh`, the single
+source for all templates — change the generator, then re-render, rather than editing one copy.
+The orchestration files it refers to (`.ai/`, `.claude/`, `scripts/orchestrate.py`) are
+installed by `vibecoding-bootstrap/scripts/sync-governance.sh`.
+
 ## Usage
 
 ```bash
