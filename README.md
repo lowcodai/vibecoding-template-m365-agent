@@ -26,8 +26,19 @@ contributor reads: commands, repository map, the DEV → REVIEW → TEST workflo
 boundaries and definition of done. Fill in its `TODO` markers when you create a project from
 this template. It is rendered by `vibecoding-bootstrap/scripts/apply-template.sh`, the single
 source for all templates — change the generator, then re-render, rather than editing one copy.
-The orchestration files it refers to (`.ai/`, `.claude/`, `scripts/orchestrate.py`) are
-installed by `vibecoding-bootstrap/scripts/sync-governance.sh`.
+
+The sequential coding team kit it refers to ships with this template (ADR-0005), copied from
+`vibecoding-copilot-governance/dev-factory/project-template/`:
+
+| Path | Purpose |
+|------|---------|
+| `CLAUDE.md` | Short memory for interactive Claude Code sessions (fill in the project name) |
+| `.claude/settings.json`, `.claude/hooks/` | Deny rules, tool guardian and secrets scanner hooks |
+| `.ai/orchestration.yaml` | Gateways, limits, validation commands — **set your lint/test commands** |
+| `.ai/roles/`, `.ai/tasks/TASK-template.md` | DEV / REVIEW / TEST prompts and the task contract |
+| `scripts/orchestrate.py` | The DEV → REVIEW → TEST state machine |
+
+Keep `.claude/` committed: the orchestrator refuses to run DEV without its hooks.
 
 ## Usage
 
