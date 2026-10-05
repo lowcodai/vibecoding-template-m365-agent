@@ -1,0 +1,3 @@
+# Run state is local audit data (logs may contain environment details). Keep it out of git;
+# summarise the final state in the PR description instead.
+runs/

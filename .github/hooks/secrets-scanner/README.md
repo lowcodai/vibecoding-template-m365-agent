@@ -6,6 +6,11 @@ tags: ['security', 'secrets', 'scanning', 'session-end']
 
 # Secrets Scanner Hook
 
+> **Claude Code port:** `dev-factory/project-template/.claude/hooks/secrets_scanner.py` (ADR-0005) —
+> blocks before the secret is written (Write/Edit) and before `git commit`, plus a `--range` CLI
+> used as an orchestrator validation. This Copilot version (session end, warn mode) remains for
+> Copilot users only.
+
 Scans files modified during a GitHub Copilot coding agent session for accidentally leaked secrets, credentials, API keys, and other sensitive data before they are committed.
 
 ## Overview

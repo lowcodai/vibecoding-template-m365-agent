@@ -1,0 +1,122 @@
+# .ai/orchestration.yaml — project contract for the sequential coding team (ADR-0005)
+# Read by scripts/orchestrate.py. The orchestrator agent reads it too, but never edits it during a run.
+version: 1
+
+execution:
+  mode: sequential            # the only supported mode
+  max_concurrent_agents: 1    # enforced by .ai/runs/.lock
+
+git:
+  base_branch: main
+  branch_prefix: agent/       # 1 task = 1 branch = 1 worktree: agent/TASK-0042
+  worktrees_dir: ../.worktrees/{repo}
+  require_clean_tree_after_dev: true
+  # Human-owned files: a task diff touching them is sent back to DEV (ADR-0005, ADR-0007).
+  protected_paths: [.claude/, .ai/orchestration.yaml, .ai/roles/, scripts/orchestrate.py]
+  # Agents never push, merge or rebase (see .claude/settings.json deny rules).
+  # Merge happens after human validation (state APPROVED).
+
+limits:
+  max_review_cycles: 3        # CHANGES_REQUESTED loops before BLOCKED
+  max_test_cycles: 3          # FAIL loops before BLOCKED
+  max_dev_runs: 6             # hard ceiling on DEV invocations per task
+  agent_result_parse_retries: 1
+
+validation:
+  # Project-wide commands, executed by the orchestrator (not by an LLM) before TEST.
+  # Tasks can add their own under `validations:` in their front matter.
+  log_tail_lines: 200
+  commands:
+    - name: lint
+      run: "echo 'configure your lint command in .ai/orchestration.yaml'"
+      timeout_sec: 600
+    - name: unit-tests
+      run: "echo 'configure your test command in .ai/orchestration.yaml'"
+      timeout_sec: 1800
+    - name: secrets-scan        # deterministic, independent of hooks (ADR-0005)
+      run: 'python3 .claude/hooks/secrets_scanner.py --range "$ORCHESTRATE_BASE_SHA..HEAD"'
+      timeout_sec: 120
+
+# One vLLM model (Qwen-3.8-27B-NVFP4 on DGX Spark), one gateway per role.
+# Temperature and the output cap are ENFORCED BY THE GATEWAY: Claude Code does not expose
+# temperature. The values below are what orchestrate.py uses for context budgeting and for
+# CLAUDE_CODE_MAX_OUTPUT_TOKENS. Keep them identical to dev-factory/gateways.yaml.
+gateways:
+  cc-dev:
+    base_url: http://dgx-spark.local:4001
+    model: qwen3.8-27b-nvfp4
+    api_key_env: CC_DEV_GATEWAY_KEY
+    context_tokens: 98000
+    max_output_tokens: 4000
+    temperature: 0.2
+  cc-review:
+    base_url: http://dgx-spark.local:4002
+    model: qwen3.8-27b-nvfp4
+    api_key_env: CC_REVIEW_GATEWAY_KEY
+    context_tokens: 32000
+    max_output_tokens: 2000
+    temperature: 0.1
+  cc-test:
+    base_url: http://dgx-spark.local:4003
+    model: qwen3.8-27b-nvfp4
+    api_key_env: CC_TEST_GATEWAY_KEY
+    context_tokens: 32000
+    max_output_tokens: 2000
+    temperature: 0.1
+
+agents:
+  dev:
+    gateway: cc-dev
+    role_prompt: .ai/roles/dev.md
+    tools: [Read, Edit, Write, Glob, Grep, Bash]
+    timeout_sec: 5400
+    # DEV runs WITHOUT --bare so that the PreToolUse hooks (tool_guardian, secrets_scanner) run.
+    # Only the project's settings are loaded (the worktree's .claude/settings.json), not the
+    # user's. The files below must be committed on the base branch; otherwise the run is
+    # BLOCKED instead of running unguarded.
+    extra_args: [--setting-sources, project]
+    required_files: [.claude/settings.json, .claude/hooks/tool_guardian.py, .claude/hooks/secrets_scanner.py]
+    # Estimated tokens consumed by Claude Code's own system prompt + tool schemas + CLAUDE.md.
+    # Calibrate: run one task and read the "usage" lines in .ai/runs/<task>/timeline.log.
+    overhead_tokens: 20000
+  review:
+    gateway: cc-review
+    role_prompt: .ai/roles/review.md
+    tools: [Read, Glob, Grep]
+    timeout_sec: 1200
+    overhead_tokens: 12000
+    extra_args: [--bare, --settings, "{settings_file}"]   # read-only role: no hooks needed
+  test:
+    gateway: cc-test
+    role_prompt: .ai/roles/test.md
+    tools: [Read, Glob, Grep]
+    timeout_sec: 1200
+    overhead_tokens: 12000
+    extra_args: [--bare, --settings, "{settings_file}"]
+
+runner:
+  # Claude Code headless invocation, common to all roles; per-role flags in agents.<role>.extra_args.
+  # REVIEW/TEST add --bare (skips CLAUDE.md auto-discovery, hooks, auto-memory and prefetches:
+  # essential to fit 32k) and get the deny rules through --settings; they only have read tools.
+  # DEV keeps hooks and deny rules from the worktree's .claude/settings.json.
+  output_format: claude-json
+  settings_file: .claude/settings.json
+  disallowed_tools: [Task, Agent, WebFetch, WebSearch]   # no sub-agents: stay sequential
+  command:
+    - claude
+    - -p
+    - "{instruction}"
+    - --output-format
+    - json
+    - --bare
+    - --no-session-persistence
+    - --append-system-prompt-file
+    - "{role_prompt_file}"
+    - --model
+    - "{model}"
+    - --tools
+    - "{tools}"
+    - --allowedTools
+    - "{tools}"
+    - --disallowedTools
+    - "{disallowed_tools}"

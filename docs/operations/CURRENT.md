@@ -1,6 +1,6 @@
 # CURRENT — Active task state
 
-> Skeleton. Updated at every checkpoint (see `.hermes.md`). Only one active task at a
+> Skeleton. Updated at every checkpoint (see `AGENTS.md` § Continuity). Only one active task at a
 > time; archive or close it before starting a new one.
 
 ## Active task
