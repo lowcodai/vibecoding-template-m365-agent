@@ -2,6 +2,8 @@
 id: TASK-XXXX
 title: "{{TITLE}}"
 status: PLANNED
+plan: ""                # docs/plans/PLAN-NNNN-<slug>.md — required when a plan exists (ADR-0006)
+epic: ""                # epic id in that plan, e.g. E1
 prd: ""                 # docs/prd/PRD-NNNN-<slug>.md, optional
 adrs: []                # [docs/adr/ADR-NNNN-<slug>.md] — REVIEW receives their Decision + Implementation
 base_branch: main

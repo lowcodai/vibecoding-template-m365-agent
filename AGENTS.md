@@ -28,6 +28,7 @@ orchestrator runs those commands to decide whether a task passes.
 |------|---------|
 | `docs/prd/` | Intent: problem, non-goals, success criteria |
 | `docs/adr/` | Decisions, including `execution_mode` — binding |
+| `docs/plans/` | Delivery plans: epics, ordered tasks and runbooks (ADR-0006) |
 | `docs/runbooks/` | Operational procedures executed by Hermes |
 | `docs/operations/` | Hermes continuity state (`CURRENT`, `HANDOFF`, `ACTIVITY`) |
 | `.ai/tasks/` | Task contracts (one per unit of code work) |
