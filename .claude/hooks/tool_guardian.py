@@ -39,6 +39,9 @@ PATTERNS: list[tuple[str, str, str, str]] = [
     ("agent_git_policy", "high", r"\bgit\s+(?:-C\s+\S+\s+)?(?:checkout|switch)\s+(?:-\S+\s+)*(?:main|master)\b", "Stay on the task branch"),
     ("agent_git_policy", "high", r"\bgit\s+(?:-C\s+\S+\s+)?commit\b[^;&|]*--no-verify", "Do not bypass commit hooks"),
     ("agent_git_policy", "high", r"\bgh\s+pr\s+merge\b", "Agents never merge"),
+    # Protected configuration: agents never modify .claude/ (settings, hooks, secrets allowlist).
+    ("protected_config", "high", r">>?\s*['\"]?[^\s'\"|;&]*\.claude/", "Only humans change .claude/; report the need instead"),
+    ("protected_config", "high", r"\b(?:tee|sed\s+-i\S*|cp|mv|ln|install|rsync|rm|chmod|truncate|dd)\b[^|;&\n]*\.claude/", "Only humans change .claude/; report the need instead"),
     # Destructive git operations
     ("destructive_git_ops", "critical", r"\bgit\s+push\b[^;&|]*(?:--force\b|\s-f\b)", "Never force-push"),
     ("destructive_git_ops", "high", r"\bgit\s+reset\s+(?:\S+\s+)*--hard\b", "Use 'git stash' or 'git reset --soft'"),

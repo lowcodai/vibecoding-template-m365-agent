@@ -14,6 +14,11 @@ mode — after the secret was already on disk. This version stops it earlier, at
 Blocking: findings at or above SECRETS_BLOCK_SEVERITY (default: high) → exit 2 (hook) / 1 (CLI).
 Lower-severity findings (JWT-like strings, internal IP:port) are reported, not blocked.
 
+Known false positives (e.g. documentation examples) go in `.claude/hooks/secrets-allowlist.txt`,
+one `<path glob> <PATTERN[,PATTERN...]>` per line, relative to the repo root. Prefer listing the
+patterns: a bare glob silences every pattern in those files. The file sits under `.claude/`, which
+agents cannot modify (deny rules, tool_guardian, orchestrator protected paths): only humans edit it.
+
 Environment (set by humans, never by the agent):
   SKIP_SECRETS_SCAN       "true" disables the scanner
   SECRETS_ALLOWLIST       comma-separated substrings; a match containing one is ignored
@@ -24,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fnmatch
 import json
 import os
 import re
@@ -73,8 +79,45 @@ PATTERNS: list[tuple[str, str, str]] = [
 SEVERITY_RANK = {"medium": 1, "high": 2, "critical": 3}
 PLACEHOLDER = re.compile(r"(?i)example|placeholder|your[_-]|xxx|changeme|todo|fixme|replace[_-]?me|dummy|fake|test[_-]?key|sample|<[^>]+>|\$\{")
 SKIP_FILES = re.compile(r"(?:^|/)(?:package-lock\.json|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|poetry\.lock|uv\.lock)$|\.lock$")
+ALLOWLIST_FILE = ".claude/hooks/secrets-allowlist.txt"
+PATH_ALLOWLIST: list[tuple[str, set[str] | None]] = []  # loaded per run by load_allowlist()
 COMMIT_RE = re.compile(r"\bgit\s+(?:-C\s+\S+\s+)?commit\b")
 MAX_FILE_BYTES = 1_000_000
+
+
+# ─── Path allowlist ──────────────────────────────────────────────────────────
+def repo_root(start: Path) -> Path:
+    proc = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=start, text=True, capture_output=True)
+    return Path(proc.stdout.strip()) if proc.returncode == 0 else start
+
+
+def load_allowlist(root: Path) -> None:
+    """Parse `<glob> [PATTERN,PATTERN]` lines; unknown pattern names are reported, not trusted."""
+    PATH_ALLOWLIST.clear()
+    path = root / ALLOWLIST_FILE
+    if not path.is_file():
+        return
+    known = {name for name, _, _ in PATTERNS}
+    for n, raw in enumerate(path.read_text().splitlines(), start=1):
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.split()
+        names = None
+        if len(parts) > 1:
+            names = {x.strip() for x in parts[1].split(",") if x.strip()}
+            unknown = names - known
+            if unknown:
+                print(f"{ALLOWLIST_FILE}:{n}: unknown pattern(s) {sorted(unknown)} ignored", file=sys.stderr)
+                names -= unknown
+                if not names:
+                    continue
+        PATH_ALLOWLIST.append((parts[0], names))
+
+
+def path_allowed(path: str, pattern_name: str) -> bool:
+    return any(fnmatch.fnmatch(path, glob) and (names is None or pattern_name in names)
+               for glob, names in PATH_ALLOWLIST)
 
 
 # ─── Scanning ────────────────────────────────────────────────────────────────
@@ -91,7 +134,7 @@ def scan_lines(path: str, lines: list[tuple[int, str]]) -> list[dict]:
         for name, severity, regex in PATTERNS:
             for m in re.finditer(regex, text):
                 match = m.group(0)
-                if PLACEHOLDER.search(match) or any(a in match for a in allow):
+                if PLACEHOLDER.search(match) or any(a in match for a in allow) or path_allowed(path, name):
                     continue
                 findings.append({"file": path, "line": line_no, "pattern": name, "severity": severity, "match": redact(match)})
     return findings
@@ -156,8 +199,13 @@ def scan_worktree_changes(cwd: Path) -> list[dict]:
     return list(unique.values())
 
 
-def scan_write(tool_name: str, tool_input: dict) -> list[dict]:
+def scan_write(tool_name: str, tool_input: dict, root: Path | None = None) -> list[dict]:
     path = tool_input.get("file_path") or tool_input.get("notebook_path") or "<unknown>"
+    if root is not None and os.path.isabs(path):
+        try:
+            path = str(Path(path).resolve().relative_to(root.resolve()))
+        except ValueError:
+            pass
     chunks = []
     if tool_name == "Write":
         chunks.append(tool_input.get("content", ""))
@@ -207,10 +255,12 @@ def run_hook() -> int:
     tool_name = payload.get("tool_name", "")
     tool_input = payload.get("tool_input") or {}
     cwd = Path(payload.get("cwd") or os.getcwd())
+    root = repo_root(cwd)
+    load_allowlist(root)
     if tool_name in ("Write", "Edit", "MultiEdit", "NotebookEdit"):
-        findings, what = scan_write(tool_name, tool_input), f"{tool_name} {tool_input.get('file_path', '')}"
+        findings, what = scan_write(tool_name, tool_input, root), f"{tool_name} {tool_input.get('file_path', '')}"
     elif tool_name == "Bash" and COMMIT_RE.search(tool_input.get("command", "") or ""):
-        findings, what = scan_worktree_changes(cwd), "git commit"
+        findings, what = scan_worktree_changes(root), "git commit"
     else:
         return 0
     block = blocking(findings)
@@ -228,6 +278,7 @@ def run_cli(argv: list[str]) -> int:
     ap.add_argument("--range", required=True, help="e.g. BASE_SHA..HEAD")
     ap.add_argument("--repo", default=".")
     args = ap.parse_args(argv)
+    load_allowlist(repo_root(Path(args.repo)))
     findings = scan_diff(git(["diff", "-U0", "--no-color", "--no-ext-diff", args.range], Path(args.repo)))
     block = blocking(findings)
     log({"event": "range_scan", "range": args.range, "findings": findings, "blocked": bool(block)})

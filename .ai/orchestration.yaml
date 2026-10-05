@@ -11,6 +11,8 @@ git:
   branch_prefix: agent/       # 1 task = 1 branch = 1 worktree: agent/TASK-0042
   worktrees_dir: ../.worktrees/{repo}
   require_clean_tree_after_dev: true
+  # Human-owned files: a task diff touching them is sent back to DEV (ADR-0005, ADR-0007).
+  protected_paths: [.claude/, .ai/orchestration.yaml, .ai/roles/, scripts/orchestrate.py]
   # Agents never push, merge or rebase (see .claude/settings.json deny rules).
   # Merge happens after human validation (state APPROVED).
 
