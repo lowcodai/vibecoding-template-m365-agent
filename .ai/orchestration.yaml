@@ -1,5 +1,5 @@
 # .ai/orchestration.yaml — project contract for the sequential coding team (ADR-0005)
-# Read by scripts/orchestrate.py. Hermes reads it too, but never edits it during a run.
+# Read by scripts/orchestrate.py. The orchestrator agent reads it too, but never edits it during a run.
 version: 1
 
 execution:

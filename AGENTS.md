@@ -1,6 +1,6 @@
 # AGENTS.md — <!-- TODO: project name -->
 
-Rulebook for every agent (Hermes, Claude Code, Copilot) and every human contributor. Read it in
+Rulebook for every agent (orchestrator, Claude Code, Copilot) and every human contributor. Read it in
 full before changing anything. An accepted ADR (`docs/adr/`) overrides this file: if you find a
 conflict, stop and report it. Keep this file short (< ~1,500 tokens) — details belong in ADRs.
 
@@ -29,8 +29,8 @@ orchestrator runs those commands to decide whether a task passes.
 | `docs/prd/` | Intent: problem, non-goals, success criteria |
 | `docs/adr/` | Decisions, including `execution_mode` — binding |
 | `docs/plans/` | Delivery plans: epics, ordered tasks and runbooks (ADR-0006) |
-| `docs/runbooks/` | Operational procedures executed by Hermes |
-| `docs/operations/` | Hermes continuity state (`CURRENT`, `HANDOFF`, `ACTIVITY`) |
+| `docs/runbooks/` | Operational procedures executed by the orchestrator |
+| `docs/operations/` | Continuity state for long-running agents (`CURRENT`, `HANDOFF`, `ACTIVITY`) |
 | `.ai/tasks/` | Task contracts (one per unit of code work) |
 | `.ai/roles/`, `.ai/orchestration.yaml` | Team configuration — owned by humans |
 | `.ai/runs/` | Run state and logs — owned by `scripts/orchestrate.py` |
@@ -46,7 +46,7 @@ orchestrator runs those commands to decide whether a task passes.
 
 | Role | Does | Never |
 |------|------|-------|
-| Hermes | frames work, writes task contracts, runs the orchestrator, arbitrates, reports | writes code, merges |
+| Orchestrator (Hermes today) | frames work, writes plans and task contracts, runs `orchestrate.py`, arbitrates, reports | writes code, merges |
 | DEV | implements, writes tests, runs lint/tests, commits locally | pushes, merges, leaves the scope |
 | REVIEW | judges the diff against ACs and ADRs | edits files |
 | TEST | judges validation results against ACs | edits files, overrides a failing command |
@@ -65,7 +65,7 @@ orchestrator runs those commands to decide whether a task passes.
 - Run lint and tests and report their real output before declaring work done.
 - Leave the worktree clean; record any gap or risk in your result.
 
-**Ask first** — stop, report, let Hermes escalate to a human
+**Ask first** — stop, report, let the orchestrator escalate to a human
 - A decision no accepted ADR covers, or an ADR that contradicts the code.
 - New dependency, database schema or public API/contract change, CI workflow change.
 - Anything touching authentication, secrets, access control, production, public
@@ -82,6 +82,20 @@ orchestrator runs those commands to decide whether a task passes.
 - Every acceptance criterion is met and covered by a test.
 - Lint and tests pass (real output, not assumed); the worktree is clean.
 - `CHANGELOG.md` updated if the change is user-visible; docs/ADR updated if behaviour changes.
+
+## Continuity
+
+For any agent working across long or interrupted sessions (ADR-0007). State lives on disk, never
+only in a chat: `docs/operations/CURRENT.md` (active work), `HANDOFF.md` (exit state),
+`ACTIVITY.md` (append-only log) — see `docs/operations/README.md`.
+
+- **Checkpoint** (update `CURRENT.md`, append to `ACTIVITY.md`) after a completed unit of work or
+  validation, before a destructive or large change, before delegating, after a tool failure that
+  changes the plan, and at 55% context.
+- **Context pressure:** at 65% finish the current step only; at 75% wrap up (tracking files,
+  non-destructive checks, commit); at 82% write `HANDOFF.md` and stop.
+- **Never report work as done "to be documented later":** if tracking files are not updated, the
+  work is not done.
 
 ## Type-specific rules (m365)
 

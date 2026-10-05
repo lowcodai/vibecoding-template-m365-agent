@@ -1,6 +1,6 @@
 # HANDOFF — Session resumption
 
-> Written only when exiting under context pressure (>= 82%, see `.hermes.md`) or a
+> Written only when exiting under context pressure (>= 82%, see `AGENTS.md` § Continuity) or a
 > planned rotation. Never leave a stale version: overwrite it on every new exit, or
 > clear it once the task has been resumed and confirmed.
 

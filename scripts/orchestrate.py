@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """orchestrate.py — sequential DEV → REVIEW → TEST state machine (ADR-0005).
 
-Hermes (the Engineering-Manager agent) never codes: it writes a task contract
+The orchestrator agent (Hermes today, ADR-0007) never codes: it writes a task contract
 (.ai/tasks/TASK-XXXX.md) and calls this script. The script runs exactly one
 Claude Code role at a time against one git worktree per task, persists every
 transition under .ai/runs/TASK-XXXX/, and stops at READY_FOR_APPROVAL or

@@ -6,6 +6,10 @@ tags: ['security', 'safety', 'preToolUse', 'guardrails']
 
 # Tool Guardian Hook
 
+> **Claude Code port:** `dev-factory/project-template/.claude/hooks/tool_guardian.py` (ADR-0005) —
+> same categories plus the agent git policy (no push/merge/rebase), structural `rm` analysis,
+> fail-closed. This Copilot version remains for Copilot users only.
+
 Blocks dangerous tool operations before a GitHub Copilot coding agent executes them, acting as a safety net against destructive commands, force pushes, database drops, and other high-risk actions.
 
 ## Overview

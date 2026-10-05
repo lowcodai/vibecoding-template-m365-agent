@@ -1,6 +1,6 @@
 # ACTIVITY — Checkpoint log (append-only)
 
-> One line per mandatory checkpoint (see `.hermes.md` § Mandatory checkpoint
+> One line per mandatory checkpoint (see `AGENTS.md` § Continuity — checkpoint
 > boundaries). Never rewrite history — only append.
 
 <!-- Suggested format:

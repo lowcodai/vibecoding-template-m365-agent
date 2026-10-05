@@ -34,4 +34,4 @@ validations: []         # task-specific commands, e.g. [{name: api-tests, run: "
 ## Notes for DEV
 
 <!-- Optional: pointers, known pitfalls. Keep the whole file under ~1,200 tokens:
-     Hermes writes it with a 2k output cap, REVIEW/TEST read parts of it inside 32k. -->
+     the orchestrator writes it (Hermes: 2k output cap), REVIEW/TEST read parts of it inside 32k. -->
