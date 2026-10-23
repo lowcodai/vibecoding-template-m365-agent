@@ -5,6 +5,7 @@
       "Bash(git push:*)",
       "Bash(git merge:*)",
       "Bash(git rebase:*)",
+      "Bash(git pull:*)",
       "Bash(git reset --hard:*)",
       "Bash(git checkout main:*)",
       "Bash(git switch main:*)",
@@ -17,9 +18,14 @@
       "Bash(gh:*)",
       "Read(./.env)",
       "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Edit(./.ai/autonomy.yaml)",
       "Edit(./.ai/orchestration.yaml)",
+      "Edit(./.ai/roles/**)",
       "Edit(./.ai/runs/**)",
-      "Edit(./.claude/**)"
+      "Edit(./.claude/**)",
+      "Edit(./scripts/orchestrate.py)"
     ]
   },
   "env": {
@@ -35,7 +41,7 @@
           {
             "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/tool_guardian.py\"",
-            "timeout": 10
+            "timeout": 30
           },
           {
             "type": "command",

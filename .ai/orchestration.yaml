@@ -11,10 +11,11 @@ git:
   branch_prefix: agent/       # 1 task = 1 branch = 1 worktree: agent/TASK-0042
   worktrees_dir: ../.worktrees/{repo}
   require_clean_tree_after_dev: true
-  # Human-owned files: a task diff touching them is sent back to DEV (ADR-0005, ADR-0007).
-  protected_paths: [.claude/, .ai/orchestration.yaml, .ai/roles/, scripts/orchestrate.py]
-  # Agents never push, merge or rebase (see .claude/settings.json deny rules).
-  # Merge happens after human validation (state APPROVED).
+  # Human-owned files: a task diff touching them is sent back to DEV (ADR-0005, ADR-0007, ADR-0008).
+  # orchestrate.py always adds the autonomy policy's own list (.ai/autonomy.yaml included).
+  protected_paths: [.claude/, .ai/autonomy.yaml, .ai/orchestration.yaml, .ai/roles/, scripts/orchestrate.py]
+  # DEV never pushes, merges or rebases. Pushing the task branch / opening the PR / merging after
+  # human approval depend on the autonomy level in .ai/autonomy.yaml (ADR-0008).
 
 limits:
   max_review_cycles: 3        # CHANGES_REQUESTED loops before BLOCKED
@@ -33,6 +34,7 @@ validation:
     - name: unit-tests
       run: "echo 'configure your test command in .ai/orchestration.yaml'"
       timeout_sec: 1800
+    # autonomy-check (rendered guard rails match .ai/autonomy.yaml) is built in and always runs first.
     - name: secrets-scan        # deterministic, independent of hooks (ADR-0005)
       run: 'python3 .claude/hooks/secrets_scanner.py --range "$ORCHESTRATE_BASE_SHA..HEAD"'
       timeout_sec: 120
@@ -75,7 +77,7 @@ agents:
     # user's. The files below must be committed on the base branch; otherwise the run is
     # BLOCKED instead of running unguarded.
     extra_args: [--setting-sources, project]
-    required_files: [.claude/settings.json, .claude/hooks/tool_guardian.py, .claude/hooks/secrets_scanner.py]
+    required_files: [.claude/settings.json, .claude/hooks/tool_guardian.py, .claude/hooks/secrets_scanner.py, .claude/hooks/autonomy.py]
     # Estimated tokens consumed by Claude Code's own system prompt + tool schemas + CLAUDE.md.
     # Calibrate: run one task and read the "usage" lines in .ai/runs/<task>/timeline.log.
     overhead_tokens: 20000
@@ -96,19 +98,20 @@ agents:
 
 runner:
   # Claude Code headless invocation, common to all roles; per-role flags in agents.<role>.extra_args.
-  # REVIEW/TEST add --bare (skips CLAUDE.md auto-discovery, hooks, auto-memory and prefetches:
-  # essential to fit 32k) and get the deny rules through --settings; they only have read tools.
+  # Never put --bare here: it skips hooks, and DEV must run with them. REVIEW/TEST add --bare in
+  # their extra_args (skips CLAUDE.md auto-discovery, hooks, auto-memory and prefetches: essential
+  # to fit 32k) and get the deny rules through --settings; they only have read tools.
   # DEV keeps hooks and deny rules from the worktree's .claude/settings.json.
   output_format: claude-json
   settings_file: .claude/settings.json
-  disallowed_tools: [Task, Agent, WebFetch, WebSearch]   # no sub-agents: stay sequential
+  disallowed_tools: [Task, Agent]   # no sub-agents: stay sequential. WebFetch/WebSearch are added
+                                    # by orchestrate.py at autonomy level `supervised` (ADR-0008).
   command:
     - claude
     - -p
     - "{instruction}"
     - --output-format
     - json
-    - --bare
     - --no-session-persistence
     - --append-system-prompt-file
     - "{role_prompt_file}"
