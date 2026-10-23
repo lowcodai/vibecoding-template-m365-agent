@@ -1,0 +1,13 @@
+# .ai/autonomy.yaml — agent autonomy level for this repository (ADR-0008).
+# Human-owned and protected: agents cannot edit it. Change it with
+#   vibecoding-bootstrap/scripts/sync-governance.sh --autonomy <level> --type <type> --dest <repo>
+# then review and merge the resulting diff. A missing or invalid file means `supervised`, and the
+# effective level is the most restrictive of this file and its copy on the base branch.
+#
+#   supervised  commit locally only; humans push and merge; no curl, wget or gh
+#   branch      push the current non-base branch, draft PRs, curl/wget, read-only gh;
+#               orchestrated runs: the orchestrator pushes and opens the PR at READY_FOR_APPROVAL
+#   trusted     branch + merge your own PR once all checks are green;
+#               orchestrated runs: the orchestrator merges after `orchestrate.py approve`
+version: 1
+level: supervised

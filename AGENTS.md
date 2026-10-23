@@ -42,7 +42,8 @@ orchestrator runs those commands to decide whether a task passes.
 1. Intent is written as a PRD, the technical choice as an ADR. No code without a decision.
 2. Code work is a task contract `.ai/tasks/TASK-NNNN.md`, run by `scripts/orchestrate.py`:
    DEV → REVIEW → TEST, one role at a time, on branch/worktree `agent/TASK-NNNN`.
-3. `READY_FOR_APPROVAL` → a human reviews and merges. Operations follow a Runbook instead.
+3. `READY_FOR_APPROVAL` → a human reviews and approves; who pushes and merges follows **Autonomy**.
+   Operations follow a Runbook instead.
 
 | Role | Does | Never |
 |------|------|-------|
@@ -50,7 +51,7 @@ orchestrator runs those commands to decide whether a task passes.
 | DEV | implements, writes tests, runs lint/tests, commits locally | pushes, merges, leaves the scope |
 | REVIEW | judges the diff against ACs and ADRs | edits files |
 | TEST | judges validation results against ACs | edits files, overrides a failing command |
-| Human | decides ADRs, approves, merges | — |
+| Human | decides ADRs, approves, merges (see **Autonomy**) | — |
 
 ## Conventions
 
@@ -72,10 +73,28 @@ orchestrator runs those commands to decide whether a task passes.
   infrastructure or recurring cost.
 
 **Never**
-- `git push`, `merge`, `rebase`, `reset --hard`, force operations, or commits on `main`.
+- Force operations, `rebase`, `reset --hard`, commits on `main`, or anything **Autonomy** does not allow.
 - Commit or read secrets (`.env*`, keys, tokens, credentials).
 - Skip, disable or weaken a test, a lint rule or a threshold to get green.
-- Edit `.ai/orchestration.yaml`, `.ai/roles/`, `.ai/runs/` or `.claude/` during a task.
+- Edit `.ai/autonomy.yaml`, `.ai/orchestration.yaml`, `.ai/roles/`, `.ai/runs/` or `.claude/` during a task.
+
+<!-- autonomy:begin -->
+## Autonomy — level `supervised`
+
+Declared in `.ai/autonomy.yaml` (human-owned, ADR-0008) and enforced by `.claude/settings.json`,
+the hooks and `scripts/orchestrate.py`. In orchestrated runs DEV never pushes, at any level.
+
+| Action | Interactive session | Orchestrated run |
+|---|---|---|
+| Push | no — a human pushes | no — a human pushes after approval |
+| Merge | no | a human merges after `orchestrate.py approve` |
+| curl / wget | no | no |
+| gh | no | no |
+
+Always forbidden: force push, push to / commit on / merge into `main`, tag push, `rebase`,
+`git pull`, `--no-verify`, reading or committing secrets, editing `.claude/`, `.ai/autonomy.yaml`,
+`.ai/orchestration.yaml`, `.ai/roles/` or `scripts/orchestrate.py`.
+<!-- autonomy:end -->
 
 ## Definition of done
 

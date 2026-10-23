@@ -5,7 +5,11 @@ The orchestrator agent (Hermes today, ADR-0007) never codes: it writes a task co
 (.ai/tasks/TASK-XXXX.md) and calls this script. The script runs exactly one
 Claude Code role at a time against one git worktree per task, persists every
 transition under .ai/runs/TASK-XXXX/, and stops at READY_FOR_APPROVAL or
-BLOCKED. Merging is always a human action.
+BLOCKED. Approval is always a human action. What happens around it depends on the
+repo's autonomy level (.ai/autonomy.yaml, ADR-0008): at `branch` and `trusted` this
+script pushes the task branch and opens a draft PR at READY_FOR_APPROVAL; at
+`trusted` it also merges the PR after `approve`, once its checks are green.
+DEV itself never pushes or merges.
 
 Usage:
   orchestrate.py new     TASK-0042 --title "Add JWT refresh"
@@ -14,8 +18,9 @@ Usage:
   orchestrate.py approve TASK-0042 --by "Jeremie"
   orchestrate.py rework  TASK-0042 --feedback "..."   # human sends it back to DEV
 
-Requires: python3 >= 3.9, PyYAML, git, and the agent CLI configured in
-.ai/orchestration.yaml (Claude Code by default).
+Requires: python3 >= 3.9, PyYAML, git, the agent CLI configured in
+.ai/orchestration.yaml (Claude Code by default), .claude/hooks/autonomy.py, and gh at
+autonomy levels `branch` and `trusted`.
 """
 from __future__ import annotations
 
@@ -34,6 +39,12 @@ try:
     import yaml
 except ImportError:  # pragma: no cover - environment guard
     sys.exit("orchestrate.py: PyYAML is required (pip install pyyaml)")
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".claude" / "hooks"))
+try:
+    import autonomy  # the repo's autonomy policy (ADR-0008)
+except ImportError:  # pragma: no cover - environment guard
+    sys.exit("orchestrate.py: .claude/hooks/autonomy.py is required (ADR-0008)")
 
 # ─── States ──────────────────────────────────────────────────────────────────
 PLANNED = "PLANNED"
@@ -137,6 +148,8 @@ class Orchestrator:
         self.run_dir = self.ai / "runs" / task_id
         self.state_path = self.run_dir / "state.json"
         self._check_config()
+        # Read once per invocation; never from the environment (ADR-0008 DEC-003).
+        self.level, self.level_reason = autonomy.effective_level(repo)
 
     # -- config ---------------------------------------------------------------
     def _check_config(self) -> None:
@@ -212,7 +225,7 @@ class Orchestrator:
         }
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.save_state(st)
-        self.log(f"run initialised (base {base}@{st['base_sha'][:10]})")
+        self.log(f"run initialised (base {base}@{st['base_sha'][:10]}, autonomy {self.level}: {self.level_reason})")
         return st
 
     # -- context budget ---------------------------------------------------------
@@ -226,7 +239,10 @@ class Orchestrator:
     def run_agent(self, role: str, work_order: str, cwd: Path) -> dict:
         agent = self.cfg["agents"][role]
         gw = self.cfg["gateways"][agent["gateway"]]
-        missing = [f for f in agent.get("required_files", []) if not (cwd / f).is_file()]
+        required = list(agent.get("required_files", []))
+        if role == "dev":
+            required.append(".claude/hooks/autonomy.py")   # tool_guardian imports it
+        missing = [f for f in dict.fromkeys(required) if not (cwd / f).is_file()]
         if missing:
             # Never run a role unguarded: hooks/settings must be committed on the base branch.
             return {"_fatal": f"{role} preflight: missing in worktree (commit them on the base branch): {', '.join(missing)}"}
@@ -239,7 +255,8 @@ class Orchestrator:
             "role_prompt_file": str(role_prompt),
             "settings_file": str((self.repo / runner.get("settings_file", ".claude/settings.json")).resolve()),
             "tools": ",".join(agent.get("tools", [])),
-            "disallowed_tools": ",".join(runner.get("disallowed_tools", [])),
+            "disallowed_tools": ",".join(dict.fromkeys(list(runner.get("disallowed_tools", []))
+                                                       + autonomy.disallowed_tools(self.level))),
             "model": gw["model"],
             "instruction": "Execute the work order given on stdin. End with the JSON result block required by your role.",
         }
@@ -314,6 +331,13 @@ class Orchestrator:
         results = []
         logs_dir = self.run_dir / "logs"
         logs_dir.mkdir(exist_ok=True)
+        # Built-in, not configurable: rendered guard-rail files must match the declared level.
+        problems = autonomy.check(wt)
+        out = "\n".join(problems) or "autonomy-check: OK"
+        (logs_dir / "autonomy-check.log").write_text(out + "\n")
+        results.append({"name": "autonomy-check", "run": ".claude/hooks/autonomy.py check (built-in)",
+                        "exit_code": 1 if problems else 0, "log_tail": out})
+        self.log(f"validation 'autonomy-check' exit={1 if problems else 0}")
         for c in commands:
             name, run = c["name"], c["run"]
             try:
@@ -416,7 +440,8 @@ class Orchestrator:
                 st["feedback"] = {"source": "orchestrator", "issue": "no commit was created on the task branch"}
                 self.transition(st, DEV, "no commit produced")
                 return
-            protected = self.cfg.get("git", {}).get("protected_paths", [])
+            protected = list(dict.fromkeys(list(self.cfg.get("git", {}).get("protected_paths", []))
+                                           + list(autonomy.PROTECTED_PATHS)))
             changed = git(["diff", "--name-only", f"{st['base_sha']}..HEAD"], wt).splitlines()
             touched = [f for f in changed if any(f == p.rstrip("/") or f.startswith(p.rstrip("/") + "/") for p in protected)]
             if touched:
@@ -459,6 +484,8 @@ class Orchestrator:
                 res.setdefault("failures", []).extend({"validation": n, "issue": "non-zero exit code"} for n in failed)
             if verdict == "PASS":
                 self.transition(st, READY, "all validations green, test verdict PASS")
+                if autonomy.at_least(self.level, "branch"):
+                    self.publish(st, wt)
             elif verdict == "FAIL":
                 c["test_cycles"] += 1
                 if c["test_cycles"] > self.limit("max_test_cycles"):
@@ -471,6 +498,61 @@ class Orchestrator:
             return
 
         raise OrchestrationError(f"unexpected state {s}")
+
+    # -- publication (autonomy `branch`/`trusted`; deterministic, never done by an agent) --
+    def _cmd(self, args: list[str], cwd: Path) -> tuple[int, str]:
+        try:
+            proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            return 127, str(exc)
+        return proc.returncode, (proc.stdout + proc.stderr).strip()
+
+    def publish(self, st: dict, wt: Path) -> None:
+        """Push the task branch and open a draft PR. A failure is recorded, never fatal: the task stays READY."""
+        branch, base = st["branch"], st["base_branch"]
+        prefix = self.cfg.get("git", {}).get("branch_prefix", "agent/")
+        pub = {"pushed": False}
+        if not branch.startswith(prefix) or branch == base:
+            pub["error"] = f"refusing to push {branch!r} (not under {prefix!r} or equal to {base!r})"
+        else:
+            code, out = self._cmd(["git", "push", "-u", "origin", f"{branch}:refs/heads/{branch}"], wt)
+            if code != 0:
+                pub["error"] = f"git push failed: {out[-500:]}"
+            else:
+                pub["pushed"] = True
+                meta, _ = parse_task(self.task_path)
+                body = (f"Task contract: `.ai/tasks/{self.task_id}.md`. REVIEW accepted, validations green "
+                        f"(READY_FOR_APPROVAL). Approve with `scripts/orchestrate.py approve {self.task_id} --by <name>`.")
+                code, out = self._cmd(["gh", "pr", "create", "--draft", "--base", base, "--head", branch,
+                                       "--title", f"{self.task_id}: {meta.get('title') or 'task'}", "--body", body], wt)
+                if code == 0:
+                    pub["pr_url"] = out.splitlines()[-1].strip() if out else ""
+                else:
+                    pub["pr_error"] = f"gh pr create failed: {out[-500:]}"
+        st["publish"] = pub
+        self.save_state(st)
+        self.log("published: " + (f"pushed {branch}" + (f", draft PR {pub['pr_url']}" if pub.get("pr_url") else
+                                                         f" ({pub.get('pr_error', 'no PR')})")
+                                  if pub["pushed"] else pub["error"]))
+
+    def merge(self, st: dict) -> None:
+        """Autonomy `trusted`, after human approval: merge the task PR once its checks are green."""
+        pr = (st.get("publish") or {}).get("pr_url")
+        result = {"merged": False}
+        cwd = self.repo
+        if not pr:
+            result["error"] = "no pull request recorded for this task: merge manually"
+        else:
+            self._cmd(["gh", "pr", "ready", pr], cwd)   # drafts cannot be merged; harmless if already ready
+            code, out = self._cmd(["gh", "pr", "checks", pr], cwd)
+            if code != 0:
+                result["error"] = f"checks not all green: {out[-300:]}"
+            else:
+                code, out = self._cmd(["gh", "pr", "merge", pr, "--squash"], cwd)
+                result.update({"merged": True} if code == 0 else {"error": f"gh pr merge failed: {out[-300:]}"})
+        st["merge"] = result
+        self.save_state(st)
+        self.log(f"merged {pr}" if result["merged"] else f"not merged — {result['error']}")
 
     def run(self) -> str:
         st = json.loads(self.state_path.read_text()) if self.state_path.exists() else self.init_state()
@@ -543,7 +625,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.cmd == "approve":
                 if st["state"] != READY:
                     raise OrchestrationError(f"cannot approve from {st['state']}")
-                orch.transition(st, APPROVED, f"human approval by {args.by} — merge {st['branch']} manually")
+                if orch.level == "trusted":
+                    orch.transition(st, APPROVED, f"human approval by {args.by} — orchestrator merges (autonomy trusted)")
+                    orch.merge(st)
+                else:
+                    orch.transition(st, APPROVED, f"human approval by {args.by} — merge {st['branch']} manually")
                 return 0
             if args.cmd == "rework":
                 if st["state"] not in (READY, BLOCKED):
