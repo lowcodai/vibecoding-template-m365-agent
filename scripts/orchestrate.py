@@ -8,7 +8,9 @@ transition under .ai/runs/TASK-XXXX/, and stops at READY_FOR_APPROVAL or
 BLOCKED. Approval is always a human action. What happens around it depends on the
 repo's autonomy level (.ai/autonomy.yaml, ADR-0008): at `branch` and `trusted` this
 script pushes the task branch and opens a draft PR at READY_FOR_APPROVAL; at
-`trusted` it also merges the PR after `approve`, once its checks are green.
+`trusted` it also merges the PR after `approve`, once its checks are green; at `yolo`
+(ADR-0009) there is no human approval: it waits for CI, merges on green, and sends a red
+CI back to DEV with the failing logs (at most `limits.max_ci_cycles` times).
 DEV itself never pushes or merges.
 
 Usage:
@@ -33,6 +35,7 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 try:
@@ -487,6 +490,8 @@ class Orchestrator:
                 self.transition(st, READY, "all validations green, test verdict PASS")
                 if autonomy.at_least(self.level, "branch"):
                     self.publish(st, wt)
+                if self.level == "yolo":
+                    self.autoland(st)
             elif verdict == "FAIL":
                 c["test_cycles"] += 1
                 if c["test_cycles"] > self.limit("max_test_cycles"):
@@ -509,9 +514,12 @@ class Orchestrator:
         return proc.returncode, (proc.stdout + proc.stderr).strip()
 
     def publish(self, st: dict, wt: Path) -> None:
-        """Push the task branch and open a draft PR. A failure is recorded, never fatal: the task stays READY."""
+        """Push the task branch and open a PR (draft below `yolo`). A failure is recorded, never fatal.
+
+        Idempotent: after a CI fix cycle the branch is pushed again and the existing PR is kept."""
         branch, base = st["branch"], st["base_branch"]
         prefix = self.cfg.get("git", {}).get("branch_prefix", "agent/")
+        previous = st.get("publish") or {}
         pub = {"pushed": False}
         if not branch.startswith(prefix) or branch == base:
             pub["error"] = f"refusing to push {branch!r} (not under {prefix!r} or equal to {base!r})"
@@ -519,12 +527,17 @@ class Orchestrator:
             code, out = self._cmd(["git", "push", "-u", "origin", f"{branch}:refs/heads/{branch}"], wt)
             if code != 0:
                 pub["error"] = f"git push failed: {out[-500:]}"
+            elif previous.get("pr_url"):
+                pub.update(pushed=True, pr_url=previous["pr_url"])
             else:
                 pub["pushed"] = True
                 meta, _ = parse_task(self.task_path)
+                yolo = self.level == "yolo"
                 body = (f"Task contract: `.ai/tasks/{self.task_id}.md`. REVIEW accepted, validations green "
-                        f"(READY_FOR_APPROVAL). Approve with `scripts/orchestrate.py approve {self.task_id} --by <name>`.")
-                code, out = self._cmd(["gh", "pr", "create", "--draft", "--base", base, "--head", branch,
+                        f"(READY_FOR_APPROVAL). " + ("Autonomy `yolo`: merged by the orchestrator once CI is green."
+                        if yolo else f"Approve with `scripts/orchestrate.py approve {self.task_id} --by <name>`."))
+                code, out = self._cmd(["gh", "pr", "create"] + ([] if yolo else ["--draft"]) +
+                                      ["--base", base, "--head", branch,
                                        "--title", f"{self.task_id}: {meta.get('title') or 'task'}", "--body", body], wt)
                 if code == 0:
                     pub["pr_url"] = out.splitlines()[-1].strip() if out else ""
@@ -535,6 +548,64 @@ class Orchestrator:
         self.log("published: " + (f"pushed {branch}" + (f", draft PR {pub['pr_url']}" if pub.get("pr_url") else
                                                          f" ({pub.get('pr_error', 'no PR')})")
                                   if pub["pushed"] else pub["error"]))
+
+    def wait_for_checks(self, pr: str) -> tuple[str, str]:
+        """Poll `gh pr checks` until a verdict: green | none (no check configured) | red | timeout."""
+        lim = self.cfg.get("limits", {})
+        timeout = float(lim.get("ci_timeout_sec", 1800))
+        poll = float(lim.get("ci_poll_sec", 20))
+        grace = float(lim.get("ci_no_checks_grace_sec", 90))   # checks may take a moment to register
+        start = time.monotonic()
+        while True:
+            code, out = self._cmd(["gh", "pr", "checks", pr], self.repo)
+            elapsed = time.monotonic() - start
+            if code == 0:
+                return "green", out
+            if "no checks reported" in out.lower():
+                if elapsed >= grace:
+                    return "none", out
+            elif code != 8:                                    # 8 = checks still pending
+                return "red", out
+            if elapsed >= timeout:
+                return "timeout", out
+            time.sleep(poll)
+
+    def ci_failure_logs(self, checks_output: str) -> list[dict]:
+        """Failed-step logs of the failing runs (at most 3), for DEV to fix."""
+        logs = []
+        for run_id in list(dict.fromkeys(re.findall(r"/actions/runs/(\d+)", checks_output)))[:3]:
+            _code, out = self._cmd(["gh", "run", "view", run_id, "--log-failed"], self.repo)
+            logs.append({"run": run_id, "log_tail": "\n".join(out.splitlines()[-150:])})
+        return logs
+
+    def autoland(self, st: dict) -> None:
+        """Autonomy `yolo` (ADR-0009): merge on green CI, send red CI back to DEV, no human approval."""
+        pub = st.get("publish") or {}
+        pr = pub.get("pr_url")
+        if not pr:
+            self.transition(st, BLOCKED, f"autonomy yolo: no pull request ({pub.get('error') or pub.get('pr_error')})")
+            return
+        status, out = self.wait_for_checks(pr)
+        if status in ("green", "none"):
+            code, mout = self._cmd(["gh", "pr", "merge", pr, "--squash"], self.repo)
+            if code == 0:
+                st["merge"] = {"merged": True, "checks": status, "by": "orchestrator (autonomy yolo)"}
+                self.transition(st, APPROVED, f"merged autonomously (autonomy yolo, checks {status}): {pr}")
+            else:
+                st["merge"] = {"merged": False, "error": f"gh pr merge failed: {mout[-300:]}"}
+                self.transition(st, BLOCKED, st["merge"]["error"])
+            return
+        if status == "timeout":
+            self.transition(st, BLOCKED, f"CI on {pr} did not finish within limits.ci_timeout_sec")
+            return
+        c = st["counters"]
+        c["ci_cycles"] = c.get("ci_cycles", 0) + 1
+        if c["ci_cycles"] > self.limit("max_ci_cycles"):
+            self.transition(st, BLOCKED, f"max_ci_cycles={self.limit('max_ci_cycles')} exceeded: CI still red on {pr}")
+            return
+        st["feedback"] = {"source": "ci", "pr": pr, "checks": out[-3000:], "failed_logs": self.ci_failure_logs(out),
+                          "issue": "the pull request's CI is red: fix the code so every check passes"}
+        self.transition(st, DEV, f"CI red on {pr} (cycle {c['ci_cycles']})")
 
     def merge(self, st: dict) -> None:
         """Autonomy `trusted`, after human approval: merge the task PR once its checks are green."""
@@ -621,12 +692,12 @@ def main(argv: list[str] | None = None) -> int:
         with RepoLock(repo):
             if args.cmd == "run":
                 final = orch.run()
-                return 0 if final == READY else 2
+                return 0 if final in (READY, APPROVED) else 2
             st = orch.load_state()
             if args.cmd == "approve":
                 if st["state"] != READY:
                     raise OrchestrationError(f"cannot approve from {st['state']}")
-                if orch.level == "trusted":
+                if orch.level in ("trusted", "yolo"):
                     orch.transition(st, APPROVED, f"human approval by {args.by} — orchestrator merges (autonomy trusted)")
                     orch.merge(st)
                 else:

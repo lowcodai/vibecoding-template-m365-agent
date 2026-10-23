@@ -90,6 +90,9 @@ GH_READ = {("pr", "view"), ("pr", "list"), ("pr", "status"), ("pr", "checks"), (
            ("run", "list"), ("run", "view"), ("run", "watch"), ("issue", "view"), ("issue", "list"),
            ("repo", "view"), ("auth", "status")}
 GH_WRITE = {("pr", "create"), ("pr", "comment")}
+# yolo (ADR-0009): the agent drives its own PR to green and merges it, with no human approval.
+GH_WRITE_YOLO = GH_WRITE | {("pr", "edit"), ("pr", "ready"), ("issue", "create"), ("issue", "comment"),
+                            ("issue", "edit"), ("run", "rerun")}
 
 
 def finding(category: str, severity: str, match: str, suggestion: str) -> dict:
@@ -227,11 +230,13 @@ def check_gh(tokens: list[str], cwd: Path, level: str, base: str, orchestrated: 
         return []
     if key in GH_READ:
         return []
+    if level == "yolo" and key in GH_WRITE_YOLO and not orchestrated:
+        return []
     if key in GH_WRITE and not orchestrated:
         if key == ("pr", "create") and not ({"--draft", "-d"} & set(args)):
             return [finding("autonomy", "high", seg, "Open pull requests as drafts: add --draft")]
         return []
-    if key == ("pr", "merge") and level == "trusted" and not orchestrated:
+    if key == ("pr", "merge") and level in ("trusted", "yolo") and not orchestrated:
         return check_pr_merge(args, words, cwd, base, seg)
     return [finding("autonomy", "high", seg, f"gh `{' '.join(w for w in key if w)}` is not allowed at level `{level}`"
                     + (" in an orchestrated run" if orchestrated else ""))]

@@ -22,6 +22,11 @@ limits:
   max_test_cycles: 3          # FAIL loops before BLOCKED
   max_dev_runs: 6             # hard ceiling on DEV invocations per task
   agent_result_parse_retries: 1
+  # Autonomy `yolo` only (ADR-0009): CI of the task PR.
+  max_ci_cycles: 3            # red-CI loops back to DEV before BLOCKED
+  ci_timeout_sec: 1800        # longest wait for the PR's checks
+  ci_poll_sec: 20
+  ci_no_checks_grace_sec: 90  # no check after this long = the repo has no CI: merge
 
 validation:
   # Project-wide commands, executed by the orchestrator (not by an LLM) before TEST.

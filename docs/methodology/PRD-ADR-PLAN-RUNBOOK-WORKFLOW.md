@@ -82,7 +82,7 @@ PLANNED → DEV → REVIEW ─CHANGES_REQUESTED→ DEV
                   │
                   └→ TEST ─FAIL→ DEV
                        │
-                       └→ READY_FOR_APPROVAL → human validation → merge (human; orchestrator at `trusted`)
+                       └→ READY_FOR_APPROVAL → human validation → merge (human; orchestrator at `trusted`; no human validation at `yolo`, ADR-0009)
 ```
 
 | Role | Gateway | Context / output / temp. | Receives |
