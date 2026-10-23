@@ -36,6 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.dont_write_bytecode = True   # no .claude/hooks/__pycache__: it would dirty the worktree
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import autonomy  # noqa: E402  (same directory, standard library only)
 

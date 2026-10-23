@@ -40,6 +40,7 @@ try:
 except ImportError:  # pragma: no cover - environment guard
     sys.exit("orchestrate.py: PyYAML is required (pip install pyyaml)")
 
+sys.dont_write_bytecode = True   # no .claude/hooks/__pycache__ in the repo
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / ".claude" / "hooks"))
 try:
     import autonomy  # the repo's autonomy policy (ADR-0008)
