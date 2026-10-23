@@ -30,7 +30,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-LEVELS = ("supervised", "branch", "trusted")   # ordered from most to least restrictive
+LEVELS = ("supervised", "branch", "trusted", "yolo")   # ordered from most to least restrictive (ADR-0008, ADR-0009)
 DEFAULT_LEVEL = "supervised"
 LEVEL_FILE = ".ai/autonomy.yaml"
 DEFAULT_BASE = "main"
@@ -117,7 +117,7 @@ def deny_rules(level: str) -> list[str]:
                      "Bash(git push --mirror:*)", "Bash(git push --tags:*)", "Bash(git push origin main:*)",
                      "Bash(gh pr merge --admin:*)", "Bash(gh api -X:*)", "Bash(gh api --method:*)"]
         if level == "branch":
-            rules.append("Bash(gh pr merge:*)")
+            rules.append("Bash(gh pr merge:*)")   # trusted and yolo merge their own green PR (hook-checked)
     rules += [
         "Read(./.env)",
         "Read(./.env.*)",
@@ -177,6 +177,9 @@ def claude_line(level: str, base: str = DEFAULT_BASE) -> str:
         "trusted": f"- Autonomy `trusted` (`.ai/autonomy.yaml`): as `branch`, and you may merge your own PR "
                    f"(`gh pr merge <n> --squash`) once all its checks are green; never push {base}, force-push "
                    f"or rebase.",
+        "yolo": f"- Autonomy `yolo` (`.ai/autonomy.yaml`): no human approval. Work through a PR from your own "
+                f"branch: push it, open the PR, fix the code until every check is green, then merge it yourself "
+                f"(`gh pr merge <n> --squash`); never push {base}, force-push, rebase or merge on red checks.",
     }
     return lines[level]
 
@@ -209,6 +212,16 @@ def agents_block(level: str, base: str = DEFAULT_BASE) -> str:
              "the orchestrator merges after `orchestrate.py approve`, once all checks are green"),
             ("curl / wget", "yes (no pipe to a shell, no file upload)", "DEV: yes"),
             ("gh", "read-only, `pr create --draft`, `pr comment`, `pr merge` (own PR, green)", "DEV: read-only"),
+        ],
+        "yolo": [
+            ("Push", f"current non-`{base}` branch only: `git push -u origin <branch>`",
+             "the orchestrator pushes `agent/TASK-*` and opens the PR at `READY_FOR_APPROVAL`"),
+            ("Merge", f"`{base}` into your own branch; your own PR once all checks are green — fix the code "
+                      "until they are (`gh run view --log-failed`), then `gh pr merge <n> --squash`",
+             "the orchestrator merges once all checks are green; red CI goes back to DEV (at most "
+             "`max_ci_cycles`); no human approval"),
+            ("curl / wget", "yes (no pipe to a shell, no file upload)", "DEV: yes"),
+            ("gh", "read and write: `pr`, `issue`, `run rerun`; `api` GET only", "DEV: read-only"),
         ],
     }
     table = "\n".join(f"| {a} | {i} | {o} |" for a, i, o in rows[level])

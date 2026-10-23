@@ -9,5 +9,7 @@
 #               orchestrated runs: the orchestrator pushes and opens the PR at READY_FOR_APPROVAL
 #   trusted     branch + merge your own PR once all checks are green;
 #               orchestrated runs: the orchestrator merges after `orchestrate.py approve`
+#   yolo        no human approval (ADR-0009): push, open the PR, fix until CI is green, merge it;
+#               orchestrated runs: the orchestrator merges on green CI, red CI goes back to DEV
 version: 1
 level: supervised
