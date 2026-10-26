@@ -7,6 +7,7 @@ epic: ""                # epic id in that plan, e.g. E1
 prd: ""                 # docs/prd/PRD-NNNN-<slug>.md, optional
 adrs: []                # [docs/adr/ADR-NNNN-<slug>.md] — REVIEW receives their Decision + Implementation
 base_branch: main
+executor: claude-code   # DEV executor: claude-code | openhands (long sessions; the repo must allow it, ADR-0010)
 validations: []         # task-specific commands, e.g. [{name: api-tests, run: "pytest tests/api -q"}]
 ---
 
@@ -30,6 +31,8 @@ validations: []         # task-specific commands, e.g. [{name: api-tests, run: "
 ## Git rules
 
 - Work only on branch `agent/TASK-XXXX`; small conventional commits; never push, merge or rebase.
+- `executor: openhands`: one commit per logical step, each under ~400 changed lines (REVIEW reads
+  large tasks commit group by commit group).
 
 ## Notes for DEV
 

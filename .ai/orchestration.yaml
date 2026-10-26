@@ -5,6 +5,8 @@ version: 1
 execution:
   mode: sequential            # the only supported mode
   max_concurrent_agents: 1    # enforced by .ai/runs/.lock
+  # shared_lock: ~/.local/state/vibecoding/model.lock   # also taken when set: one coding agent per model
+  #                                                      # across repos sharing it (ADR-0010 DEC-008)
 
 git:
   base_branch: main
@@ -63,6 +65,14 @@ gateways:
     context_tokens: 32000
     max_output_tokens: 2000
     temperature: 0.1
+  oh-dev:                     # OpenHands DEV (ADR-0010): OpenAI-compatible route, LiteLLM model slug
+    api: openai
+    base_url: http://dgx-spark.local:4004/v1
+    model: openai/qwen3.8-27b-nvfp4
+    api_key_env: OH_DEV_GATEWAY_KEY
+    context_tokens: 98000
+    max_output_tokens: 8000
+    temperature: 0.2
   cc-test:
     base_url: http://dgx-spark.local:4003
     model: qwen3.8-27b-nvfp4
@@ -86,6 +96,14 @@ agents:
     # Estimated tokens consumed by Claude Code's own system prompt + tool schemas + CLAUDE.md.
     # Calibrate: run one task and read the "usage" lines in .ai/runs/<task>/timeline.log.
     overhead_tokens: 20000
+    # Other DEV executors (ADR-0010). A task picks one with `executor:`; the repo must allow it in
+    # .ai/autonomy.yaml (`executors:`). Run them only in an isolated runner (adapters/openhands/README.md).
+    executors:
+      openhands:
+        gateway: oh-dev
+        role_prompt: .ai/roles/dev-openhands.md
+        timeout_sec: 14400        # long sessions: 4 h
+        command: [openhands, --headless, --json, --override-with-envs, --exit-without-confirmation, -f, "{work_order_file}"]
   review:
     gateway: cc-review
     role_prompt: .ai/roles/review.md
@@ -107,6 +125,10 @@ runner:
   # their extra_args (skips CLAUDE.md auto-discovery, hooks, auto-memory and prefetches: essential
   # to fit 32k) and get the deny rules through --settings; they only have read tools.
   # DEV keeps hooks and deny rules from the worktree's .claude/settings.json.
+  # prefix: [run-as-agent]   # prepended to every agent command (all roles, all executors) and to every
+  #                          # validation command: the runner's wrapper that drops to the unprivileged
+  #                          # agent user (ADR-0010 DEC-004). A runner may impose it instead through the
+  #                          # ORCHESTRATE_RUNNER_PREFIX environment variable, which takes precedence.
   output_format: claude-json
   settings_file: .claude/settings.json
   disallowed_tools: [Task, Agent]   # no sub-agents: stay sequential. WebFetch/WebSearch are added

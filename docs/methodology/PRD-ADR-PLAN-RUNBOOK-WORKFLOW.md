@@ -73,8 +73,9 @@ projects (ADR-0007).
 
 The orchestrator agent (Hermes today) is the Engineering Manager: it frames the work, writes one task contract per unit of work
 (`.ai/tasks/TASK-NNNN.md`), runs `scripts/orchestrate.py`, arbitrates the outcome and prepares the
-human validation. It does not code and never merges by itself. The orchestrator runs one Claude Code role
-at a time on one worktree per task. Pushing the task branch and merging after human approval depend on
+human validation. It does not code and never merges by itself. The orchestrator runs one agent role
+at a time on one worktree per task. DEV is Claude Code, or OpenHands for long sessions when the repo
+allows it and the task says `executor: openhands`; REVIEW and TEST are always Claude Code (ADR-0010). Pushing the task branch and merging after human approval depend on
 the repo's autonomy level (`.ai/autonomy.yaml`, ADR-0008):
 
 ```
