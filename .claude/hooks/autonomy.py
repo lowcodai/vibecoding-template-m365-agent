@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """autonomy.py — agent autonomy levels of this repository (ADR-0008). The only policy definition.
 
-The level is declared in .ai/autonomy.yaml (human-owned, protected). Everything that depends on it
-comes from this module:
+The level, and the DEV executors the repo allows (ADR-0010), are declared in .ai/autonomy.yaml
+(human-owned, protected). Everything that depends on them comes from this module:
 
 - rendered files: .claude/settings.json (deny rules) and the managed autonomy blocks of CLAUDE.md
   and AGENTS.md (`render`, run by sync-governance.sh; `check` verifies them);
@@ -10,13 +10,14 @@ comes from this module:
 
 Effective level = the most restrictive of the working-tree file and its copy on the base branch,
 so a wider level only applies once a human has merged it. Anything missing, unreadable or invalid
-resolves to `supervised`. No environment variable is consulted.
+resolves to `supervised`. The same holds for executors: the effective list is the intersection of
+both files, `[claude-code]` when the key is absent or invalid. No environment variable is consulted.
 
 Usage:
-  autonomy.py effective [--root DIR]          # print the effective level and why
-  autonomy.py render    [--root DIR] [--level L] [--dry-run]
+  autonomy.py effective [--root DIR]          # print the effective level, executors and why
+  autonomy.py render    [--root DIR] [--level L] [--executors E,E] [--dry-run]
   autonomy.py check     [--root DIR]          # exit 1 if a rendered file does not match the level
-  autonomy.py agents-block --level L [--base main]
+  autonomy.py agents-block --level L [--base main] [--executors E,E]
   autonomy.py claude-line  --level L [--base main]
 
 Standard library only: hooks must not depend on project packages.
@@ -34,6 +35,8 @@ LEVELS = ("supervised", "branch", "trusted", "yolo")   # ordered from most to le
 DEFAULT_LEVEL = "supervised"
 LEVEL_FILE = ".ai/autonomy.yaml"
 DEFAULT_BASE = "main"
+EXECUTORS = ("claude-code", "openhands")   # DEV executors of the orchestrated team (ADR-0010)
+DEFAULT_EXECUTORS = ("claude-code",)
 # Human-owned paths: agents never change them (deny rules, tool_guardian, orchestrator check).
 PROTECTED_PATHS = (".claude/", ".ai/autonomy.yaml", ".ai/orchestration.yaml", ".ai/roles/", "scripts/orchestrate.py")
 
@@ -89,6 +92,44 @@ def effective_level(root: Path) -> tuple[str, str]:
         return DEFAULT_LEVEL, f"{LEVEL_FILE} missing or invalid on branch {base}"
     level = min(local, committed, key=LEVELS.index)
     return level, f"working tree={local}, {base}={committed}"
+
+
+def parse_executors(text: str | None) -> list[str] | None:
+    """Executors declared in an autonomy.yaml text (inline list). Default when the key is absent;
+    None when the file is unreadable or the key is invalid (unknown name, duplicate, empty)."""
+    if parse_level(text) is None:
+        return None
+    found = re.findall(r"^executors:\s*(.*?)\s*(?:#.*)?$", text, flags=re.M)
+    if not found:
+        return list(DEFAULT_EXECUTORS)
+    m = re.fullmatch(r"\[(.*)\]", found[0]) if len(found) == 1 else None
+    if not m:
+        return None
+    names = [n.strip().strip("'\"") for n in m.group(1).split(",") if n.strip()]
+    if not names or len(set(names)) != len(names) or any(n not in EXECUTORS for n in names):
+        return None
+    return [n for n in EXECUTORS if n in names]
+
+
+def effective_executors(root: Path) -> tuple[list[str], str]:
+    """(executors, reason): intersection of the working tree and the base branch. Never raises."""
+    base = base_branch(root)
+    try:
+        local = parse_executors((root / LEVEL_FILE).read_text())
+    except OSError:
+        local = None
+    committed = parse_executors(_git_show(root, f"{base}:{LEVEL_FILE}"))
+    if local is None or committed is None:
+        where = "the working tree" if local is None else f"branch {base}"
+        return list(DEFAULT_EXECUTORS), f"{LEVEL_FILE} executors missing or invalid in {where}"
+    return [e for e in local if e in committed], f"working tree={local}, {base}={committed}"
+
+
+def declared_executors(root: Path) -> list[str]:
+    try:
+        return parse_executors((root / LEVEL_FILE).read_text()) or list(DEFAULT_EXECUTORS)
+    except OSError:
+        return list(DEFAULT_EXECUTORS)
 
 
 def at_least(level: str, minimum: str) -> bool:
@@ -188,7 +229,7 @@ def claude_block(level: str, base: str = DEFAULT_BASE) -> str:
     return f"{BEGIN}\n{claude_line(level, base)}\n{END}"
 
 
-def agents_block(level: str, base: str = DEFAULT_BASE) -> str:
+def agents_block(level: str, base: str = DEFAULT_BASE, executors: list[str] | tuple[str, ...] = DEFAULT_EXECUTORS) -> str:
     rows = {
         "supervised": [
             ("Push", "no — a human pushes", "no — a human pushes after approval"),
@@ -225,6 +266,7 @@ def agents_block(level: str, base: str = DEFAULT_BASE) -> str:
         ],
     }
     table = "\n".join(f"| {a} | {i} | {o} |" for a, i, o in rows[level])
+    allowed = ", ".join(f"`{e}`" for e in executors)
     return f"""{BEGIN}
 ## Autonomy — level `{level}`
 
@@ -234,6 +276,10 @@ the hooks and `scripts/orchestrate.py`. In orchestrated runs DEV never pushes, a
 | Action | Interactive session | Orchestrated run |
 |---|---|---|
 {table}
+
+DEV executors allowed in orchestrated runs (ADR-0010): {allowed}. A task
+picks one with `executor:` in its front matter; OpenHands runs only through `scripts/orchestrate.py`,
+in an isolated runner.
 
 Always forbidden: force push, push to / commit on / merge into `{base}`, tag push, `rebase`,
 `git pull`, `--no-verify`, reading or committing secrets, editing `.claude/`, `.ai/autonomy.yaml`,
@@ -267,8 +313,9 @@ def update_claude_md(text: str, level: str, base: str) -> tuple[str, str]:
     return text.rstrip("\n") + "\n" + block + "\n", "appended"
 
 
-def update_agents_md(text: str, level: str, base: str) -> tuple[str, str]:
-    block = agents_block(level, base)
+def update_agents_md(text: str, level: str, base: str,
+                     executors: list[str] | tuple[str, ...] = DEFAULT_EXECUTORS) -> tuple[str, str]:
+    block = agents_block(level, base, executors)
     new = _replace_block(text, block)
     if new is not None:
         return new, "block"
@@ -279,20 +326,36 @@ def update_agents_md(text: str, level: str, base: str) -> tuple[str, str]:
     return text.rstrip("\n") + "\n\n" + block + "\n", "appended"
 
 
-def expected_files(root: Path, level: str) -> dict[str, tuple[str, str]]:
+def expected_files(root: Path, level: str, executors: list[str] | None = None) -> dict[str, tuple[str, str]]:
     """{relative path: (new text, how)} for every file the level drives and that exists (or must)."""
     base = base_branch(root)
+    executors = executors if executors is not None else declared_executors(root)
     out = {".claude/settings.json": (settings_text(level), "rendered")}
-    for rel, fn in (("CLAUDE.md", update_claude_md), ("AGENTS.md", update_agents_md)):
-        path = root / rel
-        if path.is_file():
-            out[rel] = fn(path.read_text(), level, base)
+    if (root / "CLAUDE.md").is_file():
+        out["CLAUDE.md"] = update_claude_md((root / "CLAUDE.md").read_text(), level, base)
+    if (root / "AGENTS.md").is_file():
+        out["AGENTS.md"] = update_agents_md((root / "AGENTS.md").read_text(), level, base, executors)
     return out
 
 
-def render(root: Path, level: str | None = None, dry_run: bool = False) -> list[str]:
-    """Write the level file (if level is given) and every derived file. Returns messages."""
+def _set_executors(text: str, executors: list[str]) -> str:
+    line = f"executors: [{', '.join(executors)}]"
+    if re.search(r"^executors:", text, flags=re.M):
+        return re.sub(r"^executors:.*$", line, text, count=1, flags=re.M)
+    return re.sub(r"^(level:.*)$", lambda m: m.group(1) + "\n" + line, text, count=1, flags=re.M)
+
+
+def render(root: Path, level: str | None = None, dry_run: bool = False,
+           executors: list[str] | None = None) -> list[str]:
+    """Write the level file (if level or executors are given) and every derived file. Returns messages."""
     msgs = []
+    if executors is not None:
+        bad = [e for e in executors if e not in EXECUTORS]
+        if bad or not executors or len(set(executors)) != len(executors):
+            raise ValueError(f"invalid executors {executors!r} (expected a list of {', '.join(EXECUTORS)})")
+        executors = [e for e in EXECUTORS if e in executors]
+        if level is None:
+            level = declared_level(root) or DEFAULT_LEVEL
     if level is not None:
         if level not in LEVELS:
             raise ValueError(f"unknown level {level!r} (expected one of {', '.join(LEVELS)})")
@@ -301,8 +364,11 @@ def render(root: Path, level: str | None = None, dry_run: bool = False) -> list[
             new = re.sub(r"^level:\s*\S+", f"level: {level}", text, count=1, flags=re.M)
         else:
             new = f"# .ai/autonomy.yaml — agent autonomy level (ADR-0008). Human-owned.\nversion: 1\nlevel: {level}\n"
+        if executors is not None:
+            new = _set_executors(new, executors)
         if new != text:
-            msgs.append(f"{'would write' if dry_run else 'wrote'} {LEVEL_FILE} (level: {level})")
+            msgs.append(f"{'would write' if dry_run else 'wrote'} {LEVEL_FILE} (level: {level}"
+                        + (f", executors: {', '.join(executors)})" if executors is not None else ")"))
             if not dry_run:
                 (root / LEVEL_FILE).parent.mkdir(parents=True, exist_ok=True)
                 (root / LEVEL_FILE).write_text(new)
@@ -311,7 +377,7 @@ def render(root: Path, level: str | None = None, dry_run: bool = False) -> list[
         if level is None:
             level = DEFAULT_LEVEL
             msgs.append(f"{LEVEL_FILE} missing or invalid: rendering `{DEFAULT_LEVEL}`")
-    for rel, (text, how) in expected_files(root, level).items():
+    for rel, (text, how) in expected_files(root, level, executors).items():
         path = root / rel
         old = path.read_text() if path.is_file() else None
         if old == text:
@@ -332,6 +398,11 @@ def check(root: Path) -> list[str]:
     if level is None:
         problems.append(f"{LEVEL_FILE} missing or invalid (agents fall back to `{DEFAULT_LEVEL}`)")
         level = DEFAULT_LEVEL
+    try:
+        if parse_executors((root / LEVEL_FILE).read_text()) is None and declared_level(root) is not None:
+            problems.append(f"{LEVEL_FILE}: invalid `executors` (expected an inline list of {', '.join(EXECUTORS)})")
+    except OSError:
+        pass
     for rel, (text, how) in expected_files(root, level).items():
         path = root / rel
         if not path.is_file():
@@ -358,15 +429,21 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--root", default=".")
         if name == "render":
             p.add_argument("--level", choices=LEVELS)
+            p.add_argument("--executors", help=f"comma-separated, among {', '.join(EXECUTORS)}")
             p.add_argument("--dry-run", action="store_true")
     for name in ("agents-block", "claude-line"):
         p = sub.add_parser(name)
         p.add_argument("--level", choices=LEVELS, required=True)
         p.add_argument("--base", default=DEFAULT_BASE)
+        if name == "agents-block":
+            p.add_argument("--executors", default=",".join(DEFAULT_EXECUTORS))
     args = ap.parse_args(argv)
 
     if args.cmd == "agents-block":
-        print(agents_block(args.level, args.base))
+        names = [e.strip() for e in args.executors.split(",") if e.strip()]
+        if not names or any(e not in EXECUTORS for e in names):
+            ap.error(f"--executors: expected a comma-separated list of {', '.join(EXECUTORS)}")
+        print(agents_block(args.level, args.base, [e for e in EXECUTORS if e in names]))
         return 0
     if args.cmd == "claude-line":
         print(claude_line(args.level, args.base))
@@ -374,10 +451,19 @@ def main(argv: list[str] | None = None) -> int:
     root = Path(args.root).resolve()
     if args.cmd == "effective":
         level, reason = effective_level(root)
+        executors, ereason = effective_executors(root)
         print(f"{level} ({reason})")
+        print(f"executors: {', '.join(executors) or '(none)'} ({ereason})")
         return 0
     if args.cmd == "render":
-        for msg in render(root, args.level, args.dry_run):
+        executors = None
+        if args.executors is not None:
+            executors = [e.strip() for e in args.executors.split(",") if e.strip()]
+        try:
+            msgs = render(root, args.level, args.dry_run, executors)
+        except ValueError as exc:
+            ap.error(str(exc))
+        for msg in msgs:
             print(msg)
         return 0
     problems = check(root)

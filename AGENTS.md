@@ -47,8 +47,8 @@ orchestrator runs those commands to decide whether a task passes.
 
 | Role | Does | Never |
 |------|------|-------|
-| Orchestrator (Hermes today) | frames work, writes plans and task contracts, runs `orchestrate.py`, arbitrates, reports | writes code, merges |
-| DEV | implements, writes tests, runs lint/tests, commits locally | pushes, merges, leaves the scope |
+| Orchestrator (Hermes today) | frames work, writes plans and task contracts, picks the DEV executor, runs `orchestrate.py`, arbitrates, reports | writes code, merges, runs a coding agent itself |
+| DEV (Claude Code; OpenHands for long sessions where **Autonomy** allows it) | implements, writes tests, runs lint/tests, commits locally | pushes, merges, leaves the scope |
 | REVIEW | judges the diff against ACs and ADRs | edits files |
 | TEST | judges validation results against ACs | edits files, overrides a failing command |
 | Human | decides ADRs, approves, merges (see **Autonomy**) | — |
@@ -66,7 +66,8 @@ orchestrator runs those commands to decide whether a task passes.
 - Run lint and tests and report their real output before declaring work done.
 - Leave the worktree clean; record any gap or risk in your result.
 
-**Ask first** — stop, report, let the orchestrator escalate to a human
+**Ask first** — stop, report, let the orchestrator escalate to a human (headless: end with
+status `BLOCKED` and the question as reason)
 - A decision no accepted ADR covers, or an ADR that contradicts the code.
 - New dependency, database schema or public API/contract change, CI workflow change.
 - Anything touching authentication, secrets, access control, production, public
@@ -90,6 +91,10 @@ the hooks and `scripts/orchestrate.py`. In orchestrated runs DEV never pushes, a
 | Merge | no | a human merges after `orchestrate.py approve` |
 | curl / wget | no | no |
 | gh | no | no |
+
+DEV executors allowed in orchestrated runs (ADR-0010): `claude-code`. A task
+picks one with `executor:` in its front matter; OpenHands runs only through `scripts/orchestrate.py`,
+in an isolated runner.
 
 Always forbidden: force push, push to / commit on / merge into `main`, tag push, `rebase`,
 `git pull`, `--no-verify`, reading or committing secrets, editing `.claude/`, `.ai/autonomy.yaml`,

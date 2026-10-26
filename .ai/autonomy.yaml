@@ -11,5 +11,10 @@
 #               orchestrated runs: the orchestrator merges after `orchestrate.py approve`
 #   yolo        no human approval (ADR-0009): push, open the PR, fix until CI is green, merge it;
 #               orchestrated runs: the orchestrator merges on green CI, red CI goes back to DEV
+#
+# executors: DEV executors the orchestrated team may use here (ADR-0010) — claude-code (default),
+#             openhands (long sessions, isolated runner only). Effective list = intersection with the
+#             base branch. Change with sync-governance.sh --executors claude-code,openhands
 version: 1
 level: supervised
+executors: [claude-code]   # DEV executors allowed (ADR-0010): claude-code, openhands
