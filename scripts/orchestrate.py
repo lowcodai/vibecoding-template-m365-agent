@@ -201,6 +201,13 @@ class Orchestrator:
             if ex.get("gateway") not in self.cfg["gateways"]:
                 raise OrchestrationError(f"agents.dev.executors.{name}.gateway {ex.get('gateway')!r} is not defined under gateways")
 
+    def prefix(self) -> list[str]:
+        """Command prefix that drops agents and validations to the runner's unprivileged user
+        (ADR-0010 DEC-004). The runner may impose it with ORCHESTRATE_RUNNER_PREFIX: an isolation
+        it adds, never a permission; otherwise `runner.prefix` from .ai/orchestration.yaml."""
+        env = os.environ.get("ORCHESTRATE_RUNNER_PREFIX", "").strip()
+        return shlex.split(env) if env else list(self.cfg.get("runner", {}).get("prefix") or [])
+
     def limit(self, key: str) -> int:
         return int(self.cfg.get("limits", {}).get(key, 3))
 
@@ -319,7 +326,7 @@ class Orchestrator:
             "model": gw["model"],
             "instruction": "Execute the work order given on stdin. End with the JSON result block required by your role.",
         }
-        cmd = list(runner.get("prefix") or []) + [part.format(**subst) for part in runner["command"]]
+        cmd = self.prefix() + [part.format(**subst) for part in runner["command"]]
         cmd += [part.format(**subst) for part in agent.get("extra_args", [])]
 
         env = os.environ.copy()
@@ -340,7 +347,7 @@ class Orchestrator:
         if key_env and os.environ.get(key_env):
             env["ANTHROPIC_API_KEY"] = os.environ[key_env]
 
-        self.log(f"{role.upper()} agent started (gateway {agent['gateway']}, cmd: {shlex.join(cmd[:len(runner.get('prefix') or []) + 3])} ...)")
+        self.log(f"{role.upper()} agent started (gateway {agent['gateway']}, cmd: {shlex.join(cmd[:len(self.prefix()) + 3])} ...)")
         try:
             proc = subprocess.run(cmd, input=work_order, cwd=cwd, env=env, text=True,
                                   capture_output=True, timeout=agent.get("timeout_sec", 3600))
@@ -377,7 +384,7 @@ class Orchestrator:
         order_file = self.run_dir / "dev-work-order.md"
         order_file.write_text(role_prompt.read_text().rstrip() + "\n\n---\n\n" + work_order)
         subst = {"work_order_file": str(order_file.resolve()), "model": gw["model"]}
-        cmd = list(self.cfg["runner"].get("prefix") or []) + [part.format(**subst) for part in ex["command"]]
+        cmd = self.prefix() + [part.format(**subst) for part in ex["command"]]
         env = os.environ.copy()
         env.update({
             "LLM_MODEL": gw["model"],
@@ -436,11 +443,12 @@ class Orchestrator:
         results.append({"name": "autonomy-check", "run": ".claude/hooks/autonomy.py check (built-in)",
                         "exit_code": 1 if problems else 0, "log_tail": out})
         self.log(f"validation 'autonomy-check' exit={1 if problems else 0}")
+        prefix = self.prefix()   # validations run the agent's code: same isolation as the agents
         for c in commands:
             name, run = c["name"], c["run"]
             try:
-                proc = subprocess.run(run, shell=True, cwd=wt, text=True, capture_output=True,
-                                      timeout=c.get("timeout_sec", 900), env=env)
+                proc = subprocess.run(prefix + ["sh", "-c", run] if prefix else run, shell=not prefix, cwd=wt,
+                                      text=True, capture_output=True, timeout=c.get("timeout_sec", 900), env=env)
                 code, out = proc.returncode, proc.stdout + proc.stderr
             except subprocess.TimeoutExpired as exc:
                 code, out = 124, f"TIMEOUT after {exc.timeout}s"

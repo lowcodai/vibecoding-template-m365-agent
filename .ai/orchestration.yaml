@@ -125,8 +125,10 @@ runner:
   # their extra_args (skips CLAUDE.md auto-discovery, hooks, auto-memory and prefetches: essential
   # to fit 32k) and get the deny rules through --settings; they only have read tools.
   # DEV keeps hooks and deny rules from the worktree's .claude/settings.json.
-  # prefix: [run-as-agent]   # prepended to every agent command (all roles, all executors): the runner's
-  #                          # wrapper that drops to the unprivileged agent user (ADR-0010 DEC-004)
+  # prefix: [run-as-agent]   # prepended to every agent command (all roles, all executors) and to every
+  #                          # validation command: the runner's wrapper that drops to the unprivileged
+  #                          # agent user (ADR-0010 DEC-004). A runner may impose it instead through the
+  #                          # ORCHESTRATE_RUNNER_PREFIX environment variable, which takes precedence.
   output_format: claude-json
   settings_file: .claude/settings.json
   disallowed_tools: [Task, Agent]   # no sub-agents: stay sequential. WebFetch/WebSearch are added
