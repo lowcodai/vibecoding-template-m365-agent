@@ -40,11 +40,6 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/tool_guardian.py\"",
-            "timeout": 30
-          },
-          {
-            "type": "command",
             "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/secrets_scanner.py\"",
             "timeout": 30
           }
