@@ -192,7 +192,6 @@ def settings(level: str) -> dict:
         "hooks": {
             "PreToolUse": [
                 {"matcher": "Bash", "hooks": [
-                    {"type": "command", "command": hook.format("tool_guardian.py"), "timeout": 30},
                     {"type": "command", "command": hook.format("secrets_scanner.py"), "timeout": 30},
                 ]},
                 {"matcher": "Write|Edit|MultiEdit|NotebookEdit", "hooks": [
